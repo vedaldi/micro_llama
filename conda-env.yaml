@@ -1,0 +1,12 @@
+name: micro_llama
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - blobfile
+  - jupyter
+  - matplotlib
+  - nbstripout
+  - numpy<2.0.0
+  - pytorch::pytorch
+  - tiktoken
