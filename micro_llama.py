@@ -3,7 +3,16 @@ import tiktoken
 import tiktoken.load
 
 
-def rope(x, theta):
+def rope(x: torch.Tensor, theta: torch.Tensor) -> torch.Tensor:
+    """function for the rotary positional embedding
+
+    Args:
+        x (torch.Tensor): input token embeddings. shape = B x N x D, where N is the number of tokens, and D is the dimentions.
+        theta (torch.Tensor): rotation factor
+
+    Returns:
+        torch.Tensor: rotary position embedded tokens.
+    """
     B, N, H, D = x.shape
     freq = theta ** -torch.arange(0, 1, 2 / D, device=x.device)
     time = torch.arange(N, device=x.device)
@@ -46,7 +55,15 @@ class RMSNorm(torch.nn.Module):
         self.epsilon = epsilon
         self.weight = torch.nn.Parameter(torch.ones(dim))
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Perform RMSNorm on the input tensor.
+
+        Args:
+            x (torch.Tensor): input token embeddings. shape is N x D, where D = 4096 in our case.
+
+        Returns:
+            torch.Tensor: normalized tensor. same size as input
+        """
         return (x * self.weight) * torch.rsqrt(
             (x * x).mean(-1, keepdim=True) + self.epsilon
         )
@@ -63,20 +80,30 @@ class Attention(torch.nn.Module):
         self.wv = torch.nn.Linear(dim, dim // (n_heads // n_kv_heads), bias=False)
         self.wo = torch.nn.Linear(dim, dim, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """compute Attention.
+
+        Args:
+            x (torch.Tensor): input tensor for the token embeddings.
+                              shape is B x N x D, where B is the batch size,
+                              N is the number of tokens, and D is the dimension of the input (4096 in our case)
+
+        Returns:
+            torch.Tensor: return the output of the transformer block. shape is same as the input tensor.
+        """
         B, N, D = x.shape
         H = self.n_heads
         J = self.n_kv_heads
-        q = self.wq(x)
-        k = self.wk(x)
-        v = self.wv(x)
+        q = self.wq(x)          # shape of q = B x N x D
+        k = self.wk(x)          # shape of k = B x N x (D // (n_heads // n_kv_heads))
+        v = self.wv(x)          # shape of v = B x N x (D // (n_heads // n_kv_heads))
 
         q = q.reshape((B, N, H, D // H))
         k = k.reshape((B, N, J, D // H))
         v = v.reshape((B, N, J, D // H))
 
-        q = rope(q, theta=self.rope_theta)
-        k = rope(k, theta=self.rope_theta)
+        q = rope(q, theta=self.rope_theta)  # add positional encoding
+        k = rope(k, theta=self.rope_theta)  # add positional encoding
 
         k = (
             k.reshape((B, N, J, 1, D // H))
@@ -93,7 +120,7 @@ class Attention(torch.nn.Module):
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
 
-        dot = q @ k.transpose(2, 3) / (D // H) ** 0.5
+        dot = q @ k.transpose(2, 3) / (D // H) ** 0.5       # multi-head attention map --> shape = H x N x N --> H = number of heads, N = number of tokens
         mask = torch.full((N, N), float("-inf"), device=x.device)
         mask = torch.triu(mask, diagonal=1)
         dot = dot + mask  # (B, H, N, N)
@@ -112,7 +139,17 @@ class FeedForward(torch.nn.Module):
         self.w2 = torch.nn.Linear(latent_dim, dim, bias=False)
         self.w3 = torch.nn.Linear(dim, latent_dim, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the feed forward block.
+
+        Args:
+            x (torch.Tensor): output from the attention block.
+                              shape is B x N x D, where B is the batch size,
+                              N is the number of tokens, and D is the dimension of the input (4096 in our case)
+
+        Returns:
+            torch.Tensor: output after performing the `sigmoid linear unit` and feed forward operation. shape is same as input
+        """
         a = torch.nn.functional.silu(self.w1(x))
         b = self.w3(x)
         return self.w2(a * b)
@@ -126,7 +163,16 @@ class Layer(torch.nn.Module):
         self.attention = Attention(dim, n_heads, n_kv_heads, rope_theta)
         self.feed_forward = FeedForward(dim, latent_dim)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """run the forward routine for the norm-attention-feedforward block
+
+        Args:
+            x (torch.Tensor): input tensor of shape (B, N, D) where B is the batch size, N is the number of tokens,
+            and D is the dimension of the input (4096 in our case)
+
+        Returns:
+            torch.Tensor: _description_
+        """
         y = self.attention_norm(x)
         y = self.attention(y)
         x = x + y
@@ -176,7 +222,15 @@ class Llama(torch.nn.Module):
         self.norm = RMSNorm(self.dim, self.norm_eps)
         self.output = torch.nn.Linear(self.dim, self.vocab_size, bias=False)
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run forward routine of the micro llama model.
+
+        Args:
+            x (torch.Tensor): the input prompt converted into tokens. shape would be 1 x num_tokens.
+
+        Returns:
+            torch.Tensor: llama embeddings for the input tokens. shape is TDB
+        """
         x = self.tok_embeddings(x)
         for layer in self.layers:
             x = layer(x)
